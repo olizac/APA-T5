@@ -207,13 +207,123 @@ para que se realice el realce sintáctico en Python del mismo (no vale insertar 
 pantalla, debe hacerse en formato *markdown*).
 
 ##### Código de `estereo2mono()`
+```python
+def estereo2mono(ficEste, ficMono, canal=2):
+    with open(ficEste, 'rb') as f_in:
+        canales, frec_muestreo, bits, num_muestras = _lee_cabecera(f_in)
 
+        if canales != 2:
+            raise Exception('Input file is not stereo.')
+        if bits != 16:
+            raise Exception('Input file is not 16-bit.')
+
+        datos = struct.unpack(f'<{2 * num_muestras}h', f_in.read(2 * num_muestras * 2))
+
+    muestras_l = datos[0::2]
+    muestras_r = datos[1::2]
+
+    if canal == 0:
+        mono = muestras_l
+    elif canal == 1:
+        mono = muestras_r
+    elif canal == 2:
+        mono = tuple((l + r) // 2 for l, r in zip(muestras_l, muestras_r))
+    elif canal == 3:
+        mono = tuple((l - r) // 2 for l, r in zip(muestras_l, muestras_r))
+    else:
+        raise Exception('canal must be 0, 1, 2 or 3.')
+
+    with open(ficMono, 'wb') as f_out:
+        _escribe_cabecera(f_out, 1, frec_muestreo, 16, num_muestras)
+        f_out.write(struct.pack(f'<{num_muestras}h', *mono))
+```
 ##### Código de `mono2estereo()`
+```python
+def mono2estereo(ficIzq, ficDer, ficEste):
+    with open(ficIzq, 'rb') as f_l:
+        canales_l, frec_l, bits_l, num_muestras_l = _lee_cabecera(f_l)
+        if canales_l != 1:
+            raise Exception('Left file is not mono.')
+        if bits_l != 16:
+            raise Exception('Left file is not 16-bit.')
+        datos_l = struct.unpack(f'<{num_muestras_l}h', f_l.read(num_muestras_l * 2))
 
+    with open(ficDer, 'rb') as f_r:
+        canales_r, frec_r, bits_r, num_muestras_r = _lee_cabecera(f_r)
+        if canales_r != 1:
+            raise Exception('Right file is not mono.')
+        if bits_r != 16:
+            raise Exception('Right file is not 16-bit.')
+        datos_r = struct.unpack(f'<{num_muestras_r}h', f_r.read(num_muestras_r * 2))
+
+    if frec_l != frec_r:
+        raise Exception('Sample rates do not match.')
+    if num_muestras_l != num_muestras_r:
+        raise Exception('Files have different number of samples.')
+
+    estereo = [muestra for par in zip(datos_l, datos_r) for muestra in par]
+
+    with open(ficEste, 'wb') as f_out:
+        _escribe_cabecera(f_out, 2, frec_l, 16, num_muestras_l)
+        f_out.write(struct.pack(f'<{2 * num_muestras_l}h', *estereo))
+
+```
 ##### Código de `codEstereo()`
+```python
+def codEstereo(ficEste, ficCod):
+    with open(ficEste, 'rb') as f_in:
+        canales, frec_muestreo, bits, num_muestras = _lee_cabecera(f_in)
 
+        if canales != 2:
+            raise Exception('Input file is not stereo.')
+        if bits != 16:
+            raise Exception('Input file is not 16-bit.')
+
+        datos = struct.unpack(f'<{2 * num_muestras}h', f_in.read(2 * num_muestras * 2))
+
+    muestras_l = datos[0::2]
+    muestras_r = datos[1::2]
+
+    codificadas = [
+        (((l + r) // 2) & 0xFFFF) << 16 | (((l - r) // 2) & 0xFFFF)
+        for l, r in zip(muestras_l, muestras_r)
+    ]
+
+    with open(ficCod, 'wb') as f_out:
+        _escribe_cabecera(f_out, 1, frec_muestreo, 32, num_muestras)
+        f_out.write(struct.pack(f'<{num_muestras}I', *codificadas))
+
+```
 ##### Código de `decEstereo()`
+```python
+def decEstereo(ficCod, ficEste):
+    with open(ficCod, 'rb') as f_in:
+        canales, frec_muestreo, bits, num_muestras = _lee_cabecera(f_in)
 
+        if canales != 1:
+            raise Exception('Input file is not mono.')
+        if bits != 32:
+            raise Exception('Input file is not 32-bit.')
+
+        datos = struct.unpack(f'<{num_muestras}I', f_in.read(num_muestras * 4))
+
+    def _semisuma(muestra):
+        return struct.unpack('<h', struct.pack('<H', (muestra >> 16) & 0xFFFF))[0]
+
+    def _semidif(muestra):
+        return struct.unpack('<h', struct.pack('<H', muestra & 0xFFFF))[0]
+
+    estereo = [
+        canal
+        for muestra in datos
+        for canal in (_semisuma(muestra) + _semidif(muestra),
+                      _semisuma(muestra) - _semidif(muestra))
+    ]
+
+    with open(ficEste, 'wb') as f_out:
+        _escribe_cabecera(f_out, 2, frec_muestreo, 16, num_muestras)
+        f_out.write(struct.pack(f'<{2 * num_muestras}h', *estereo))
+```
 #### Subida del resultado al repositorio GitHub y *pull-request*
 
 La entrega se formalizará mediante *pull request* al repositorio de la tarea.
